@@ -8,6 +8,7 @@ const path    = require('path');
 const authRoutes  = require('./routes/auth');
 const gmailRoutes = require('./routes/gmail');
 const { startScheduler } = require('./scheduler');
+const { initDb } = require('./db');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -62,11 +63,14 @@ app.use((err, req, res, _next) => {
 });
 
 // ── Start ─────────────────────────────────────────────────────
-if (require.main === module) {
+initDb().then(() => {
   app.listen(PORT, () => {
     console.log(`\n  Agentra MailSense → http://localhost:${PORT}\n`);
     startScheduler();
   });
-}
+}).catch(err => {
+  console.error('Failed to init DB:', err);
+  process.exit(1);
+});
 
 module.exports = app;
