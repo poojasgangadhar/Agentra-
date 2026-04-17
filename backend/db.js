@@ -1,129 +1,99 @@
-// backend/db.js - sql.js version for Vercel compatibility
-const fs = require('fs');
+// backend/db.js - Turso (libsql) version for Vercel serverless
 require('dotenv').config();
 
-const DB_PATH = process.env.DB_PATH || '/tmp/mailsense.db';
+const { createClient } = require('@libsql/client');
 
-let dbInstance = null;
+let clientInstance = null;
 
 async function initDb() {
-  if (dbInstance) return dbInstance;
+  if (clientInstance) return clientInstance;
 
-  const initSqlJs = require('sql.js');
-  const SQL = await initSqlJs();
+  const client = createClient({
+    url: process.env.TURSO_URL,
+    authToken: process.env.TURSO_TOKEN,
+  });
 
-  let db;
-  if (fs.existsSync(DB_PATH)) {
-    const fileBuffer = fs.readFileSync(DB_PATH);
-    db = new SQL.Database(fileBuffer);
-  } else {
-    db = new SQL.Database();
-  }
-
-  function saveDb() {
-    const data = db.export();
-    fs.writeFileSync(DB_PATH, Buffer.from(data));
-  }
-
-  db.run(`PRAGMA journal_mode = WAL`);
-  db.run(`PRAGMA foreign_keys = ON`);
-
-  db.run(`CREATE TABLE IF NOT EXISTS users (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    first_name  TEXT    NOT NULL,
-    last_name   TEXT    NOT NULL,
-    email       TEXT    NOT NULL UNIQUE,
-    password    TEXT    NOT NULL,
-    role        TEXT    NOT NULL DEFAULT 'user',
-    agent_mode  TEXT    NOT NULL DEFAULT 'safe',
-    is_verified INTEGER NOT NULL DEFAULT 0,
-    created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
-    updated_at  TEXT    NOT NULL DEFAULT (datetime('now'))
-  )`);
-
-  db.run(`CREATE TABLE IF NOT EXISTS otp_codes (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    email      TEXT    NOT NULL,
-    code       TEXT    NOT NULL,
-    type       TEXT    NOT NULL,
-    expires_at TEXT    NOT NULL,
-    used       INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT    NOT NULL DEFAULT (datetime('now'))
-  )`);
-
-  db.run(`CREATE TABLE IF NOT EXISTS gmail_tokens (
-    id             INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_email     TEXT    NOT NULL UNIQUE,
-    access_token   TEXT    NOT NULL,
-    refresh_token  TEXT,
-    token_expiry   TEXT,
-    scope          TEXT,
-    connected_at   TEXT    NOT NULL DEFAULT (datetime('now'))
-  )`);
-
-  db.run(`CREATE TABLE IF NOT EXISTS emails (
-    id           TEXT    PRIMARY KEY,
-    user_email   TEXT    NOT NULL,
-    gmail_id     TEXT    NOT NULL,
-    thread_id    TEXT,
-    from_addr    TEXT,
-    from_name    TEXT,
-    subject      TEXT,
-    snippet      TEXT,
-    body         TEXT,
-    tag          TEXT    DEFAULT 'important',
-    color        TEXT    DEFAULT '#4f6ef7',
-    replied      INTEGER DEFAULT 0,
-    archived     INTEGER DEFAULT 0,
-    deleted      INTEGER DEFAULT 0,
-    email_time   TEXT,
-    fetched_at   TEXT    NOT NULL DEFAULT (datetime('now'))
-  )`);
-
-  db.run(`CREATE TABLE IF NOT EXISTS agent_logs (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_email TEXT    NOT NULL,
-    dot_color  TEXT    NOT NULL DEFAULT 'blue',
-    message    TEXT    NOT NULL,
-    created_at TEXT    NOT NULL DEFAULT (datetime('now'))
-  )`);
-
-  db.run(`CREATE TABLE IF NOT EXISTS agent_stats (
-    user_email TEXT    PRIMARY KEY,
-    total      INTEGER DEFAULT 0,
-    important  INTEGER DEFAULT 0,
-    promo      INTEGER DEFAULT 0,
-    spam       INTEGER DEFAULT 0,
-    replied    INTEGER DEFAULT 0,
-    updated_at TEXT    NOT NULL DEFAULT (datetime('now'))
-  )`);
-
-  saveDb();
+  await client.executeMultiple(`
+    CREATE TABLE IF NOT EXISTS users (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      first_name  TEXT    NOT NULL,
+      last_name   TEXT    NOT NULL,
+      email       TEXT    NOT NULL UNIQUE,
+      password    TEXT    NOT NULL,
+      role        TEXT    NOT NULL DEFAULT 'user',
+      agent_mode  TEXT    NOT NULL DEFAULT 'safe',
+      is_verified INTEGER NOT NULL DEFAULT 0,
+      created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+      updated_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS otp_codes (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      email      TEXT    NOT NULL,
+      code       TEXT    NOT NULL,
+      type       TEXT    NOT NULL,
+      expires_at TEXT    NOT NULL,
+      used       INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT    NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS gmail_tokens (
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_email     TEXT    NOT NULL UNIQUE,
+      access_token   TEXT    NOT NULL,
+      refresh_token  TEXT,
+      token_expiry   TEXT,
+      scope          TEXT,
+      connected_at   TEXT    NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS emails (
+      id           TEXT    PRIMARY KEY,
+      user_email   TEXT    NOT NULL,
+      gmail_id     TEXT    NOT NULL,
+      thread_id    TEXT,
+      from_addr    TEXT,
+      from_name    TEXT,
+      subject      TEXT,
+      snippet      TEXT,
+      body         TEXT,
+      tag          TEXT    DEFAULT 'important',
+      color        TEXT    DEFAULT '#4f6ef7',
+      replied      INTEGER DEFAULT 0,
+      archived     INTEGER DEFAULT 0,
+      deleted      INTEGER DEFAULT 0,
+      email_time   TEXT,
+      fetched_at   TEXT    NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS agent_logs (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_email TEXT    NOT NULL,
+      dot_color  TEXT    NOT NULL DEFAULT 'blue',
+      message    TEXT    NOT NULL,
+      created_at TEXT    NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS agent_stats (
+      user_email TEXT    PRIMARY KEY,
+      total      INTEGER DEFAULT 0,
+      important  INTEGER DEFAULT 0,
+      promo      INTEGER DEFAULT 0,
+      spam       INTEGER DEFAULT 0,
+      replied    INTEGER DEFAULT 0,
+      updated_at TEXT    NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
 
   function prepare(sql) {
     return {
-      run(...args) {
-        const p = args.length === 1 && args[0] !== null && typeof args[0] === 'object' && !Array.isArray(args[0]) ? args[0] : args;
-        db.run(sql, p);
-        saveDb();
-        return { changes: db.getRowsModified() };
+      async run(params = {}) {
+        const r = await client.execute({ sql, args: params });
+        return { changes: r.rowsAffected };
       },
-      get(...args) {
-        const p = args.length === 1 && args[0] !== null && typeof args[0] === 'object' && !Array.isArray(args[0]) ? args[0] : args;
-        const stmt = db.prepare(sql);
-        stmt.bind(p);
-        const row = stmt.step() ? stmt.getAsObject() : undefined;
-        stmt.free();
-        return row;
+      async get(params = {}) {
+        const r = await client.execute({ sql, args: params });
+        if (r.rows.length === 0) return undefined;
+        return Object.fromEntries(r.columns.map((c, i) => [c, r.rows[0][i]]));
       },
-      all(...args) {
-        const p = args.length === 1 && args[0] !== null && typeof args[0] === 'object' && !Array.isArray(args[0]) ? args[0] : args;
-        const stmt = db.prepare(sql);
-        stmt.bind(p);
-        const results = [];
-        while (stmt.step()) results.push(stmt.getAsObject());
-        stmt.free();
-        return results;
+      async all(params = {}) {
+        const r = await client.execute({ sql, args: params });
+        return r.rows.map(row => Object.fromEntries(r.columns.map((c, i) => [c, row[i]])));
       }
     };
   }
@@ -148,36 +118,34 @@ async function initDb() {
     upsertStats:      prepare("INSERT INTO agent_stats (user_email, total, important, promo, spam, replied) VALUES ($user_email, $total, $important, $promo, $spam, $replied) ON CONFLICT(user_email) DO UPDATE SET total = excluded.total, important = excluded.important, promo = excluded.promo, spam = excluded.spam, replied = excluded.replied, updated_at = datetime('now')"),
   };
 
-  function markEmailsDeleted(userEmail, emailIds) {
+  async function markEmailsDeleted(userEmail, emailIds) {
     if (!emailIds.length) return;
     const ph = emailIds.map(() => '?').join(',');
-    db.run(`UPDATE emails SET deleted = 1 WHERE user_email = ? AND id IN (${ph})`, [userEmail, ...emailIds]);
-    saveDb();
+    await client.execute({ sql: `UPDATE emails SET deleted = 1 WHERE user_email = ? AND id IN (${ph})`, args: [userEmail, ...emailIds] });
   }
 
-  function recomputeStats(userEmail) {
-    const rows = db.exec(`SELECT tag, COUNT(*) as cnt FROM emails WHERE user_email = '${userEmail}' AND deleted = 0 GROUP BY tag`);
-    const repliedRows = db.exec(`SELECT COUNT(*) as cnt FROM emails WHERE user_email = '${userEmail}' AND replied = 1 AND deleted = 0`);
+  async function recomputeStats(userEmail) {
+    const rows = await client.execute({ sql: `SELECT tag, COUNT(*) as cnt FROM emails WHERE user_email = ? AND deleted = 0 GROUP BY tag`, args: [userEmail] });
+    const repliedRow = await client.execute({ sql: `SELECT COUNT(*) as cnt FROM emails WHERE user_email = ? AND replied = 1 AND deleted = 0`, args: [userEmail] });
     const stats = { user_email: userEmail, total: 0, important: 0, promo: 0, spam: 0, replied: 0 };
-    if (repliedRows.length && repliedRows[0].values.length) stats.replied = repliedRows[0].values[0][0];
-    if (rows.length) {
-      for (const [tag, cnt] of rows[0].values) {
-        stats.total += cnt;
-        if (tag === 'important') stats.important = cnt;
-        if (tag === 'promo')     stats.promo     = cnt;
-        if (tag === 'spam')      stats.spam      = cnt;
-      }
+    if (repliedRow.rows.length) stats.replied = repliedRow.rows[0][0];
+    for (const row of rows.rows) {
+      const tag = row[0], cnt = row[1];
+      stats.total += cnt;
+      if (tag === 'important') stats.important = cnt;
+      if (tag === 'promo')     stats.promo     = cnt;
+      if (tag === 'spam')      stats.spam      = cnt;
     }
-    stmts.upsertStats.run(stats);
+    await stmts.upsertStats.run(stats);
     return stats;
   }
 
-  function query(sql, ...params)    { return prepare(sql).all(...params); }
-  function queryOne(sql, ...params) { return prepare(sql).get(...params); }
-  function exec(sql, ...params)     { return prepare(sql).run(...params); }
+  async function query(sql, ...params)    { return prepare(sql).all(params); }
+  async function queryOne(sql, ...params) { return prepare(sql).get(params); }
+  async function exec(sql, ...params)     { return prepare(sql).run(params); }
 
-  dbInstance = { db, stmts, recomputeStats, markEmailsDeleted, query, queryOne, exec, saveDb };
-  return dbInstance;
+  clientInstance = { client, stmts, recomputeStats, markEmailsDeleted, query, queryOne, exec };
+  return clientInstance;
 }
 
 module.exports = { initDb };

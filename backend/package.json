@@ -17,6 +17,6 @@
     ]
   },
   "dependencies": {
-    "sql.js": "^1.14.1"
+    "@libsql/client": "^0.17.2"
   }
 }
